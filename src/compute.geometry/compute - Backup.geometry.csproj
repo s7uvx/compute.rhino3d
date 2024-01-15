@@ -1,7 +1,10 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+<<<<<<< Updated upstream
+=======
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>compute.geometry</AssemblyName>
+>>>>>>> Stashed changes
     <OutputType>Exe</OutputType>
     <TargetFramework>net48</TargetFramework>
     <PlatformTarget>x64</PlatformTarget>
