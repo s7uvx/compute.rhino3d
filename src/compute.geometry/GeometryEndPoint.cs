@@ -763,7 +763,8 @@ namespace compute.geometry
                 var options = new Rhino.FileIO.SerializationOptions();
                 options.RhinoVersion = rhinoVersion;
                 options.WriteUserData = true;
-                _settings.Context = new System.Runtime.Serialization.StreamingContext(System.Runtime.Serialization.StreamingContextStates.All, options);
+                // Removed obsolete StreamingContext usage
+                //_settings.Context = new System.Runtime.Serialization.StreamingContext(System.Runtime.Serialization.StreamingContextStates.All, options);
                 _settings.Converters.Add(new ArchivableDictionaryResolver());
             }
             return _settings;

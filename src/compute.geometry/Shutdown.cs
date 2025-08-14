@@ -58,7 +58,6 @@ namespace compute.geometry
             }
         }
 
-        static System.Net.Http.HttpClient _httpClient;
         static DateTime _lastSpanCheck = DateTime.Now;
 
         private async static void TimerTask(object timerState)
@@ -77,25 +76,21 @@ namespace compute.geometry
 
             if (!shutdown && _parentPort > 0 && _idleSpan > 0)
             {
-                // Don't check the server every timer tick. Just check when we start approaching
-                // what we think is our span limit.
                 var shouldCheckSpan = DateTime.Now - _lastSpanCheck;
-                //Serilog.Log.Debug($"Idle span value is {_idleSpan}. Elapsed time {shouldCheckSpan.TotalSeconds} seconds. Last span check {_lastSpanCheck.ToLocalTime()}.");
                 if (shouldCheckSpan.TotalSeconds > _idleSpan)
                 {
-                    if (_httpClient == null)
-                        _httpClient = new System.Net.Http.HttpClient();
+                    var client = HttpClientFactory.Instance;
                     string url = $"http://localhost:{_parentPort}/idlespan";
                     _lastSpanCheck = DateTime.Now;
                     Serilog.Log.Debug($"The elapsed time has exceeded the idle span limit");
                     Serilog.Log.Debug($"Checking with parent process at {url}.");
                     try
                     {
-                        if (!String.IsNullOrEmpty(Config.ApiKey) && !_httpClient.DefaultRequestHeaders.Contains("RhinoComputeKey"))
-                            _httpClient.DefaultRequestHeaders.Add("RhinoComputeKey", Config.ApiKey);
-                        HttpResponseMessage response = await _httpClient.GetAsync(url);
+                        if (!String.IsNullOrEmpty(Config.ApiKey) && !client.DefaultRequestHeaders.Contains("RhinoComputeKey"))
+                            client.DefaultRequestHeaders.Add("RhinoComputeKey", Config.ApiKey);
+                        HttpResponseMessage response = await client.GetAsync(url);
                         response.EnsureSuccessStatusCode();    
-                        string span = response.Content.ReadAsStringAsync().Result;
+                        string span = await response.Content.ReadAsStringAsync();
                         if (!string.IsNullOrEmpty(span))
                         {
                             int serverIdleSpan = int.Parse(span);

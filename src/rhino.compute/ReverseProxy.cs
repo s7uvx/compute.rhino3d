@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging;
 using Serilog;
+using rhino.compute;
 
 namespace rhino.compute
 {
@@ -13,7 +14,6 @@ namespace rhino.compute
     {
         static bool _initCalled = false;
         static Task _initTask;
-        static HttpClient _client;
         private const string _apiKeyHeader = "RhinoComputeKey";
         static void Initialize()
         {
@@ -24,9 +24,8 @@ namespace rhino.compute
             Log.Debug($"Initiliazing reverse proxy at {DateTime.Now.ToLocalTime()}");
             Log.Debug($"Spawn children at startup is set to {ComputeChildren.SpawnOnStartup}");
 
-            _client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
-            _client.DefaultRequestHeaders.Add("User-Agent", $"compute.rhino3d-proxy/1.0.0");
-            _client.Timeout = TimeSpan.FromSeconds(Config.ReverseProxyRequestTimeout);
+            var client = HttpClientFactory.Instance;
+            client.Timeout = TimeSpan.FromSeconds(Config.ReverseProxyRequestTimeout);
 
             // Launch child processes on start. Getting the base url is enough to get things rolling
             if (ComputeChildren.SpawnOnStartup)
@@ -128,30 +127,29 @@ namespace rhino.compute
             // mark the current time as a call to a compute child process
             ComputeChildren.UpdateLastCall();
 
+            var client = HttpClientFactory.Instance;
+
             if (method == HttpMethod.Post)
             {
-                // include RhinoComputeKey header in request to compute child process
                 var req = new HttpRequestMessage(HttpMethod.Post, proxyUrl);
                 if (initialRequest.Headers.TryGetValue(_apiKeyHeader, out var keyHeader))
                     req.Headers.Add(_apiKeyHeader, keyHeader.ToString());
 
                 using (var stream = initialRequest.BodyReader.AsStream(false))
+                using (var sw = new System.IO.StreamReader(stream))
                 {
-                    using (var sw = new System.IO.StreamReader(initialRequest.BodyReader.AsStream()))
+                    string body = await sw.ReadToEndAsync();
+                    using (var stringContent = new StringContent(body, System.Text.Encoding.UTF8, "application/json"))
                     {
-                        string body = sw.ReadToEnd();
-                        using (var stringContent = new StringContent(body, System.Text.Encoding.UTF8, "applicaton/json"))
-                        {
-                            req.Content = stringContent;
-                            return await _client.SendAsync(req);
-                        }
+                        req.Content = stringContent;
+                        return await client.SendAsync(req);
                     }
                 }
             }
 
             if (method == HttpMethod.Get)
             {
-                return await _client.GetAsync(proxyUrl);
+                return await client.GetAsync(proxyUrl);
             }
 
             throw new System.NotSupportedException("Only GET and POST are currently supported for reverse proxy");
@@ -208,6 +206,20 @@ namespace rhino.compute
                 responseString = await proxyResponse.Content.ReadAsStringAsync();
             }
             await res.WriteAsync(responseString);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                if (_concurrentRequestLogger != null)
+                {
+                    _concurrentRequestLogger.Elapsed -= (s, e) => { };
+                    _concurrentRequestLogger.Stop();
+                    _concurrentRequestLogger.Dispose();
+                    _concurrentRequestLogger = null;
+                }
+            }
         }
     }
 }

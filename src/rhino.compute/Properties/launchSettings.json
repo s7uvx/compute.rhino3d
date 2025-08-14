@@ -10,7 +10,7 @@
   "profiles": {
     "rhino.compute": {
       "commandName": "Project",
-      "commandLineArgs": "--port 6500 --childcount 1 --spawn-on-startup"
+      "commandLineArgs": "--port 81 --childcount 1 --spawn-on-startup"
       //"environmentVariables": {
       //  "ASPNETCORE_URLS": "http://+:5000"
       //}

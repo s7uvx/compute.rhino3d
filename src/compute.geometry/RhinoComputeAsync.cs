@@ -85,26 +85,24 @@ namespace Rhino.Compute
                 function = "/" + function; // if not present
 
             string uri = $"{WebAddress}{function}".ToLower();
-            var request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(uri);
-            request.ContentType = "application/json";
-            request.UserAgent = $"compute.rhino3d.cs/{Version}";
-            request.Method = "POST";
+            var client = compute.geometry.HttpClientFactory.Instance;
+            var request = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, uri)
+            {
+                Content = new System.Net.Http.StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            };
+            request.Headers.UserAgent.ParseAdd($"compute.rhino3d.cs/{Version}");
 
             // try auth token (compute.rhino3d.com only)
             if (!string.IsNullOrWhiteSpace(AuthToken))
-                request.Headers.Add("Authorization", "Bearer " + AuthToken);
+                request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", AuthToken);
 
             // try api key (self-hosted compute)
             if (!string.IsNullOrWhiteSpace(ApiKey))
                 request.Headers.Add("RhinoComputeKey", ApiKey);
-            
-            using (var streamWriter = new StreamWriter(request.GetRequestStream()))
-            {
-                streamWriter.Write(json);
-                streamWriter.Flush();
-            }
 
-            return request.GetResponse();
+            var response = client.Send(request);
+            var stream = response.Content.ReadAsStream();
+            return new compute.geometry.HttpResponseMessageWebResponseAdapter(response, stream);
         }
 
         public static async Task<T> PostAsync<T>(string function, params object[] postData)

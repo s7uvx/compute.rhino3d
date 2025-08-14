@@ -225,7 +225,7 @@ namespace rhino.compute
                     }
                         
                     var span = DateTime.Now - start;
-                    if (span.TotalSeconds > 60)
+                    if (span.TotalSeconds > 300)
                     {
                         process.Kill();
                         string msg = "Unable to start a local compute server";
