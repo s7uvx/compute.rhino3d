@@ -2,6 +2,7 @@
 using System.IO;
 using System.Net;
 using System.Collections.Generic;
+using System.Linq;
 
 using Rhino.Geometry;
 
@@ -14,21 +15,52 @@ using GH_IO.Serialization;
 
 using Resthopper.IO;
 using Newtonsoft.Json;
-using System.Linq;
 using Serilog;
 using System.Reflection;
 
 namespace compute.geometry
 {
-    class GrasshopperDefinition
+    class GrasshopperDefinition : IDisposable
     {
         static Dictionary<string, FileSystemWatcher> _filewatchers;
         static HashSet<string> _watchedFiles = new HashSet<string>();
         static uint _watchedFileRuntimeSerialNumber = 1;
+        static DateTime _lastCleanup = DateTime.Now;
+        const int MAX_WATCHED_FILES = 100;
+        const int MAX_WATCHERS = 50;
+        
         public static uint WatchedFileRuntimeSerialNumber
         {
             get { return _watchedFileRuntimeSerialNumber; }
         }
+        
+        static void CleanupWatchers()
+        {
+            // Cleanup old watchers if we have too many
+            if (_filewatchers != null && _filewatchers.Count > MAX_WATCHERS)
+            {
+                Log.Debug($"Cleaning up file watchers, current count: {_filewatchers.Count}");
+                var watchersToRemove = _filewatchers.Take(_filewatchers.Count - MAX_WATCHERS / 2).ToList();
+                foreach (var kvp in watchersToRemove)
+                {
+                    kvp.Value?.Dispose();
+                    _filewatchers.Remove(kvp.Key);
+                }
+            }
+            
+            if (_watchedFiles.Count > MAX_WATCHED_FILES)
+            {
+                Log.Debug($"Cleaning up watched files list, current count: {_watchedFiles.Count}");
+                var filesToRemove = _watchedFiles.Take(_watchedFiles.Count - MAX_WATCHED_FILES / 2).ToList();
+                foreach (var file in filesToRemove)
+                {
+                    _watchedFiles.Remove(file);
+                }
+            }
+            
+            _lastCleanup = DateTime.Now;
+        }
+        
         static void RegisterFileWatcher(string path)
         {
             if (_filewatchers == null)
@@ -43,6 +75,13 @@ namespace compute.geometry
                 return;
 
             _watchedFiles.Add(path.ToLowerInvariant());
+            
+            // Periodic cleanup check (every hour)
+            if ((DateTime.Now - _lastCleanup).TotalHours > 1)
+            {
+                CleanupWatchers();
+            }
+            
             string directory = Path.GetDirectoryName(path);
             if (_filewatchers.ContainsKey(directory) || !Directory.Exists(directory))
                 return;
@@ -301,6 +340,7 @@ namespace compute.geometry
         Dictionary<string, InputGroup> _input = new Dictionary<string, InputGroup>();
         Dictionary<string, IGH_Param> _output = new Dictionary<string, IGH_Param>();
         public List<string> ErrorMessages = new List<string>();
+        private bool _disposed = false;
 
         public GH_Path GetPath(string p)
         {
@@ -823,6 +863,53 @@ namespace compute.geometry
                 outputSchema.Errors = null;
 
             return outputSchema;
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    // Clean up managed resources
+                    if (Definition != null)
+                    {
+                        try
+                        {
+                            // Remove from DocumentServer before disposing
+                            Grasshopper.Instances.DocumentServer.RemoveDocument(Definition);
+                        }
+                        catch (Exception e)
+                        {
+                            Log.Error(e, "Exception removing document from DocumentServer");
+                        }
+
+                        Definition.Dispose();
+                    }
+
+                    // Clear input cache
+                    foreach (var input in _input.Values)
+                    {
+                        input?.ClearCache();
+                    }
+                    _input.Clear();
+                    _output.Clear();
+                    ErrorMessages.Clear();
+                }
+
+                _disposed = true;
+            }
+        }
+
+        ~GrasshopperDefinition()
+        {
+            Dispose(false);
         }
 
         private static object SerializeDataTree(IGH_Structure data, string name, int rhinoVersion = 7)
@@ -1409,6 +1496,12 @@ namespace compute.geometry
             public void CacheTree(Resthopper.IO.DataTree<ResthopperObject> tree)
             {
                 _tree = tree;
+            }
+
+            public void ClearCache()
+            {
+                _tree = null;
+                _default = null;
             }
 
             Resthopper.IO.DataTree<ResthopperObject> _tree;

@@ -4,6 +4,7 @@ using GH_IO.Serialization;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using Serilog;
+using System.Runtime.Caching;
 
 namespace compute.geometry
 {
@@ -264,9 +265,43 @@ namespace compute.geometry
             get
             {
                 var policy = new System.Runtime.Caching.CacheItemPolicy();
-                // no policy yet, but we could do things like evict after 2 weeks with
-                //policy.SlidingExpiration = new TimeSpan(14, 0, 0, 0);
+                // Evict items after 2 hours of inactivity to prevent memory leaks
+                policy.SlidingExpiration = new TimeSpan(2, 0, 0);
+                // Absolute expiration must be MaxValue when using SlidingExpiration
+                policy.AbsoluteExpiration = DateTimeOffset.MaxValue;
+                
+                // Add memory pressure monitoring - evict when memory pressure is high
+                policy.Priority = CacheItemPriority.Default;
+                
+                // Add callback for when items are removed
+                policy.RemovedCallback = (args) =>
+                {
+                    if (args.RemovedReason == CacheEntryRemovedReason.Evicted)
+                    {
+                        Log.Warning($"Cache item removed due to memory pressure: {args.CacheItem.Key}");
+                    }
+                };
+                
                 return policy;
+            }
+        }
+        
+        public static void MonitorMemoryUsage()
+        {
+            var cache = MemoryCache.Default;
+            var memoryBytes = cache.GetCount();
+            
+            // Log memory usage periodically
+            if (memoryBytes > 100) // More than 100 items in cache
+            {
+                Log.Debug($"Cache item count: {memoryBytes}");
+                
+                // Force trim if too many items
+                if (memoryBytes > 1000)
+                {
+                    Log.Warning($"Cache has {memoryBytes} items, trimming...");
+                    cache.Trim(50); // Trim 50% of items
+                }
             }
         }
     }

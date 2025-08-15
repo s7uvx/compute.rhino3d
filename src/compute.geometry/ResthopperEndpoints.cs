@@ -61,6 +61,8 @@ namespace compute.geometry
         }
 
         static object _ghsolvelock = new object();
+        static DateTime _lastMemoryCheck = DateTime.Now;
+        static int _solveCount = 0;
 
         static string GrasshopperSolveHelper(Schema input, string body, System.Diagnostics.Stopwatch stopwatch, HttpContext ctx)
         {
@@ -129,6 +131,27 @@ namespace compute.geometry
             // Dispose headless doc
             if (RhinoDoc.ActiveDoc is object)
                 RhinoDoc.ActiveDoc.Dispose();
+
+            // Dispose definition to prevent memory leak
+            definition?.Dispose();
+            
+            // Periodic memory monitoring (every 100 solves or every hour)
+            _solveCount++;
+            if (_solveCount % 100 == 0 || (DateTime.Now - _lastMemoryCheck).TotalHours > 1)
+            {
+                DataCache.MonitorMemoryUsage();
+                _lastMemoryCheck = DateTime.Now;
+                
+                // Force garbage collection if memory usage is high
+                var memoryUsed = GC.GetTotalMemory(false) / (1024 * 1024); // MB
+                if (memoryUsed > 1000) // If using more than 1GB
+                {
+                    Serilog.Log.Warning($"High memory usage detected ({memoryUsed}MB), forcing garbage collection");
+                    GC.Collect();
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect();
+                }
+            }
 
             return returnJson;
         }
