@@ -6,7 +6,6 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging;
 using Serilog;
-using rhino.compute;
 
 namespace rhino.compute
 {
@@ -47,6 +46,7 @@ namespace rhino.compute
         static System.Timers.Timer _concurrentRequestLogger;
         static int _activeConcurrentRequests;
         static int _maxConcurrentRequests;
+        static System.Timers.ElapsedEventHandler _timerHandler;
         class ConcurrentRequestTracker : System.IDisposable
         {
             public ConcurrentRequestTracker()
@@ -66,11 +66,12 @@ namespace rhino.compute
             // log once per minute
             var span = new System.TimeSpan(0, 1, 0);
             _concurrentRequestLogger = new System.Timers.Timer(span.TotalMilliseconds);
-            _concurrentRequestLogger.Elapsed += (s, e) =>
+            _timerHandler = (s, e) =>
             {
                 logger.LogInformation($"Max concurrent requests = {_maxConcurrentRequests}");
                 _maxConcurrentRequests = _activeConcurrentRequests;
             };
+            _concurrentRequestLogger.Elapsed += _timerHandler;
             _concurrentRequestLogger.AutoReset = true;
             _concurrentRequestLogger.Start();
         }
@@ -131,17 +132,17 @@ namespace rhino.compute
 
             if (method == HttpMethod.Post)
             {
-                var req = new HttpRequestMessage(HttpMethod.Post, proxyUrl);
-                if (initialRequest.Headers.TryGetValue(_apiKeyHeader, out var keyHeader))
-                    req.Headers.Add(_apiKeyHeader, keyHeader.ToString());
-
-                using (var stream = initialRequest.BodyReader.AsStream(false))
-                using (var sw = new System.IO.StreamReader(stream))
+                using (var req = new HttpRequestMessage(HttpMethod.Post, proxyUrl))
                 {
-                    string body = await sw.ReadToEndAsync();
-                    using (var stringContent = new StringContent(body, System.Text.Encoding.UTF8, "application/json"))
+                    if (initialRequest.Headers.TryGetValue(_apiKeyHeader, out var keyHeader))
+                        req.Headers.Add(_apiKeyHeader, keyHeader.ToString());
+
+                    using (var stream = initialRequest.BodyReader.AsStream(false))
+                    using (var sw = new System.IO.StreamReader(stream))
                     {
-                        req.Content = stringContent;
+                        string body = await sw.ReadToEndAsync();
+                        req.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                        // Don't dispose StringContent here - it will be disposed with the request message
                         return await client.SendAsync(req);
                     }
                 }
@@ -162,12 +163,14 @@ namespace rhino.compute
             using (var tracker = new ConcurrentRequestTracker())
             {
                 var (baseurl, port) = ComputeChildren.GetComputeServerBaseUrl();
-                var proxyResponse = await SendProxyRequest(req, HttpMethod.Get, baseurl);
-                ComputeChildren.UpdateLastCall();
-                if (proxyResponse.StatusCode == System.Net.HttpStatusCode.OK)
-                    ComputeChildren.MoveToFrontOfQueue(port);
+                using (var proxyResponse = await SendProxyRequest(req, HttpMethod.Get, baseurl))
+                {
+                    ComputeChildren.UpdateLastCall();
+                    if (proxyResponse.StatusCode == System.Net.HttpStatusCode.OK)
+                        ComputeChildren.MoveToFrontOfQueue(port);
 
-                responseString = await proxyResponse.Content.ReadAsStringAsync();
+                    responseString = await proxyResponse.Content.ReadAsStringAsync();
+                }
             }
             await res.WriteAsync(responseString);
         }
@@ -179,13 +182,15 @@ namespace rhino.compute
             using (var tracker = new ConcurrentRequestTracker())
             {
                 var (baseurl, port) = ComputeChildren.GetComputeServerBaseUrl();
-                var proxyResponse = await SendProxyRequest(req, HttpMethod.Post, baseurl);
-                ComputeChildren.UpdateLastCall();
-                if (proxyResponse.StatusCode == System.Net.HttpStatusCode.OK)
-                    ComputeChildren.MoveToFrontOfQueue(port);
+                using (var proxyResponse = await SendProxyRequest(req, HttpMethod.Post, baseurl))
+                {
+                    ComputeChildren.UpdateLastCall();
+                    if (proxyResponse.StatusCode == System.Net.HttpStatusCode.OK)
+                        ComputeChildren.MoveToFrontOfQueue(port);
 
-                res.StatusCode = (int)proxyResponse.StatusCode;
-                responseString = await proxyResponse.Content.ReadAsStringAsync();
+                    res.StatusCode = (int)proxyResponse.StatusCode;
+                    responseString = await proxyResponse.Content.ReadAsStringAsync();
+                }
             }
             await res.WriteAsync(responseString);
         }
@@ -197,13 +202,15 @@ namespace rhino.compute
             using (var tracker = new ConcurrentRequestTracker())
             {
                 var (baseurl, port) = ComputeChildren.GetComputeServerBaseUrl();
-                var proxyResponse = await SendProxyRequest(req, HttpMethod.Post, baseurl);
-                ComputeChildren.UpdateLastCall();
-                if (proxyResponse.StatusCode == System.Net.HttpStatusCode.OK)
-                    ComputeChildren.MoveToFrontOfQueue(port);
+                using (var proxyResponse = await SendProxyRequest(req, HttpMethod.Post, baseurl))
+                {
+                    ComputeChildren.UpdateLastCall();
+                    if (proxyResponse.StatusCode == System.Net.HttpStatusCode.OK)
+                        ComputeChildren.MoveToFrontOfQueue(port);
 
-                res.StatusCode = (int)proxyResponse.StatusCode;
-                responseString = await proxyResponse.Content.ReadAsStringAsync();
+                    res.StatusCode = (int)proxyResponse.StatusCode;
+                    responseString = await proxyResponse.Content.ReadAsStringAsync();
+                }
             }
             await res.WriteAsync(responseString);
         }
@@ -214,7 +221,11 @@ namespace rhino.compute
             {
                 if (_concurrentRequestLogger != null)
                 {
-                    _concurrentRequestLogger.Elapsed -= (s, e) => { };
+                    if (_timerHandler != null)
+                    {
+                        _concurrentRequestLogger.Elapsed -= _timerHandler;
+                        _timerHandler = null;
+                    }
                     _concurrentRequestLogger.Stop();
                     _concurrentRequestLogger.Dispose();
                     _concurrentRequestLogger = null;

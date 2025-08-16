@@ -3,6 +3,7 @@ using System.IO;
 using System.Net;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http; // Added for HttpClient
 
 using Rhino.Geometry;
 
@@ -1254,14 +1255,18 @@ namespace compute.geometry
             if (url.StartsWith("http", StringComparison.OrdinalIgnoreCase))
             {
                 byte[] byteArray = null;
-                HttpWebRequest request = (HttpWebRequest)WebRequest.Create(url);
-                request.AutomaticDecompression = DecompressionMethods.GZip;
-                using (HttpWebResponse response = (HttpWebResponse)request.GetResponse())
-                using (var stream = response.GetResponseStream())
-                using (var memStream = new MemoryStream())
+                var client = HttpClientFactory.Instance;
+                var httpRequest = new HttpRequestMessage(HttpMethod.Get, url);
+                httpRequest.Headers.AcceptEncoding.ParseAdd("gzip");
+                using (var response = client.SendAsync(httpRequest).GetAwaiter().GetResult())
                 {
-                    stream.CopyTo(memStream);
-                    byteArray = memStream.ToArray();
+                    response.EnsureSuccessStatusCode();
+                    using (var stream = response.Content.ReadAsStreamAsync().GetAwaiter().GetResult())
+                    using (var memStream = new MemoryStream())
+                    {
+                        stream.CopyTo(memStream);
+                        byteArray = memStream.ToArray();
+                    }
                 }
 
                 try

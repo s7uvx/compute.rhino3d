@@ -232,13 +232,11 @@ namespace compute.geometry
                 }
                 if (jtoken == null)
                 {
-                    using (var client = new System.Net.WebClient())
-                    {
-                        string cacheString = client.DownloadString(url);
-                        object data = string.IsNullOrWhiteSpace(cacheString) ? null : Newtonsoft.Json.JsonConvert.DeserializeObject(cacheString);
-                        var ja = data as Newtonsoft.Json.Linq.JArray;
-                        jtoken = ja[0];
-                    }
+                    var client = HttpClientFactory.Instance;
+                    string cacheString = client.GetStringAsync(url).GetAwaiter().GetResult();
+                    object data = string.IsNullOrWhiteSpace(cacheString) ? null : Newtonsoft.Json.JsonConvert.DeserializeObject(cacheString);
+                    var ja = data as Newtonsoft.Json.Linq.JArray;
+                    jtoken = ja[0];
                 }
 
                 if( jtoken!=null )

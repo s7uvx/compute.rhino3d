@@ -16,9 +16,34 @@ namespace rhino.compute
         public static int SpawnCount { get; set; } = 1;
 
         static DateTime _lastCall = DateTime.MinValue;
+        static DateTime _lastProcessCleanup = DateTime.Now;
         public static void UpdateLastCall()
         {
             _lastCall = DateTime.Now;
+            // Periodic cleanup of dead processes (every 5 minutes)
+            if ((DateTime.Now - _lastProcessCleanup).TotalMinutes > 5)
+            {
+                CleanupDeadProcesses();
+                _lastProcessCleanup = DateTime.Now;
+            }
+        }
+        static void CleanupDeadProcesses()
+        {
+            lock (_lockObject)
+            {
+                var allProcesses = _computeProcesses.ToList();
+                var deadProcesses = allProcesses.Where(tuple => tuple.Item1.HasExited).ToList();
+                if (deadProcesses.Count > 0)
+                {
+                    Log.Debug($"Cleaning up {deadProcesses.Count} dead compute processes");
+                    foreach (var dead in deadProcesses)
+                    {
+                        dead.Item1.Dispose();
+                    }
+                    var aliveProcesses = allProcesses.Where(tuple => !tuple.Item1.HasExited).ToList();
+                    _computeProcesses = new Queue<Tuple<Process, int>>(aliveProcesses);
+                }
+            }
         }
 
         /// <summary>
@@ -95,6 +120,12 @@ namespace rhino.compute
 
                 if (activePort == 0)
                 {
+                    // Clean up dead processes before creating new queue
+                    var deadProcesses = _computeProcesses.Where(tuple => tuple.Item1.HasExited).ToList();
+                    foreach (var dead in deadProcesses)
+                    {
+                        dead.Item1.Dispose(); // Dispose dead Process objects
+                    }
                     var aliveProcesses = _computeProcesses.Where(tuple => !tuple.Item1.HasExited).ToList();
                     _computeProcesses = new Queue<Tuple<Process, int>>(aliveProcesses);
                     LaunchCompute(_computeProcesses, true);
